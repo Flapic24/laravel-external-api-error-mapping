@@ -2,7 +2,7 @@
 
 namespace App\Http\Controllers;
 
-use Illuminate\Http\Request;
+use App\Support\UpstreamErrorMapper;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Http;
 
@@ -10,20 +10,14 @@ class ExternalApiDemoController extends Controller
 {
     public function demo(): JsonResponse
     {
-        // Direkt “rossz” hívás: nem létező domain → tipikus network error
         $url = 'https://this-domain-should-not-exist.example/api';
 
         try {
             $response = Http::timeout(3)->get($url);
 
             if ($response->failed()) {
-                // ide majd jön a mapping
-                return response()->json([
-                    'ok' => false,
-                    'type' => 'UPSTREAM_HTTP_ERROR',
-                    'status' => $response->status(),
-                    'body' => $response->json(),
-                ], 502);
+                $mapped = UpstreamErrorMapper::fromResponse($response);
+                return response()->json($mapped, $mapped['error']['http_status']);
             }
 
             return response()->json([
@@ -31,12 +25,8 @@ class ExternalApiDemoController extends Controller
                 'data' => $response->json(),
             ]);
         } catch (\Throwable $e) {
-            // ide majd jön a mapping (network / timeout / DNS / etc)
-            return response()->json([
-                'ok' => false,
-                'type' => 'UPSTREAM_NETWORK_ERROR',
-                'message' => $e->getMessage(),
-            ], 502);
+            $mapped = UpstreamErrorMapper::fromThrowable($e);
+            return response()->json($mapped, $mapped['error']['http_status']);
         }
     }
 }
