@@ -41,10 +41,23 @@ final class UpstreamErrorMapper
             };
 
             $retryable = ($status === 429);
-            return self::shape($code, $message, $httpStatus, $retryable, [
+            $meta = [
                 'upstream_status' => $status,
                 'upstream_body' => self::safeBody($response),
-            ]);
+            ];
+        
+            if ($status === 422) {
+                $meta['upstream_body']  = self::safeBody($response);
+            }
+
+            if($status === 429) {
+                $retryAfter = $response->header('Retry-After');
+                if (!empty($retryAfter)) {
+                    $meta['retry_after'] = $retryAfter;
+                }
+            }
+
+            return self::shape($code, $message, $httpStatus, $retryable, $meta);
         }
 
         // 5xx: upstream szerverhiba -> általában retryable
