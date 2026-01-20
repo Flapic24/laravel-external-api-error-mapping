@@ -41,14 +41,9 @@ final class UpstreamErrorMapper
             };
 
             $retryable = ($status === 429);
-            $meta = [
-                'upstream_status' => $status,
-                'upstream_body' => self::safeBody($response),
-            ];
+            $meta = [ 'upstream_status' => $status ];
         
-            if ($status === 422) {
-                $meta['upstream_body']  = self::safeBody($response);
-            }
+            if ($status === 422) { $meta['upstream_body']  = self::safeBody($response); }
 
             if($status === 429) {
                 $retryAfter = $response->header('Retry-After');
@@ -69,13 +64,27 @@ final class UpstreamErrorMapper
                 default => 'UPSTREAM_SERVER_ERROR',
             };
 
-            $message = 'A külső szolgáltató hibát jelzett. Kérjük, próbáld újra később.';
-            $retryable = true;
+            $message = match ($status) {
+                502 => 'Kapcsolati hiba a külső szolgáltató felé.',
+                503 => 'A külső szolgáltató átmenetileg nem elérhető.',
+                504 => 'A külső szolgáltató túl sokáig nem válaszolt.',
+                default => 'A külső szolgáltató hibát jelzett.',
+            };
 
-            return self::shape($code, $message, $httpStatus, $retryable, [
+            $retryable = true;
+            $meta = [
                 'upstream_status' => $status,
                 'upstream_body' => self::safeBody($response),
-            ]);
+            ];
+
+            if ($status === 503) {
+                $retryAfter = $response->header('Retry-After');
+                if(!empty($retryAfter)) {
+                    $meta['retry_after'] = $retryAfter;
+                }
+            }
+
+            return self::shape($code, $message, $httpStatus, $retryable, $meta);
         }
 
         // Ide elvileg nem jutunk, de legyen stabil
