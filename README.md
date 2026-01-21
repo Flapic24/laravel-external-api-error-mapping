@@ -1,59 +1,128 @@
-<p align="center"><a href="https://laravel.com" target="_blank"><img src="https://raw.githubusercontent.com/laravel/art/master/logo-lockup/5%20SVG/2%20CMYK/1%20Full%20Color/laravel-logolockup-cmyk-red.svg" width="400" alt="Laravel Logo"></a></p>
+# Laravel External API Error Mapping
 
-<p align="center">
-<a href="https://github.com/laravel/framework/actions"><img src="https://github.com/laravel/framework/workflows/tests/badge.svg" alt="Build Status"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/dt/laravel/framework" alt="Total Downloads"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/v/laravel/framework" alt="Latest Stable Version"></a>
-<a href="https://packagist.org/packages/laravel/framework"><img src="https://img.shields.io/packagist/l/laravel/framework" alt="License"></a>
-</p>
+Ez a projekt egy rövid, célzott gyakorló / portfólió projekt, amely azt mutatja be,
+hogyan lehet egy nem megbízható külső API-t egységes, stabil és jól dokumentált
+hiba-szerződéssel (error contract) kezelni Laravel 11-ben.
 
-## About Laravel
+A fókusz nem az UI-n vagy az üzleti logikán van, hanem a defenzív backend tervezésen.
 
-Laravel is a web application framework with expressive, elegant syntax. We believe development must be an enjoyable and creative experience to be truly fulfilling. Laravel takes the pain out of development by easing common tasks used in many web projects, such as:
+---
 
-- [Simple, fast routing engine](https://laravel.com/docs/routing).
-- [Powerful dependency injection container](https://laravel.com/docs/container).
-- Multiple back-ends for [session](https://laravel.com/docs/session) and [cache](https://laravel.com/docs/cache) storage.
-- Expressive, intuitive [database ORM](https://laravel.com/docs/eloquent).
-- Database agnostic [schema migrations](https://laravel.com/docs/migrations).
-- [Robust background job processing](https://laravel.com/docs/queues).
-- [Real-time event broadcasting](https://laravel.com/docs/broadcasting).
+## Projekt célja
 
-Laravel is accessible, powerful, and provides tools required for large, robust applications.
+Valós projektekben a külső API-k:
+- timeoutolhatnak
+- rate limitelhetnek
+- 4xx / 5xx hibákat adhatnak vissza
+- vagy hálózati hibával elérhetetlenné válhatnak
 
-## Learning Laravel
+A cél egy olyan réteg kialakítása, amely:
 
-Laravel has the most extensive and thorough [documentation](https://laravel.com/docs) and video tutorial library of all modern web application frameworks, making it a breeze to get started with the framework. You can also check out [Laravel Learn](https://laravel.com/learn), where you will be guided through building a modern Laravel application.
+- nem engedi szétcsúszni az API válaszokat
+- egységes error contractot ad vissza minden esetben
+- világosan jelzi, hogy egy hiba retryelhető-e
+- elkülöníti az upstream és a saját rendszer hibáit
 
-If you don't feel like reading, [Laracasts](https://laracasts.com) can help. Laracasts contains thousands of video tutorials on a range of topics including Laravel, modern PHP, unit testing, and JavaScript. Boost your skills by digging into our comprehensive video library.
+---
 
-## Laravel Sponsors
+## Megoldás áttekintése
 
-We would like to extend our thanks to the following sponsors for funding Laravel development. If you are interested in becoming a sponsor, please visit the [Laravel Partners program](https://partners.laravel.com).
+A projekt egy központi UpstreamErrorMapper osztályt használ, amely:
 
-### Premium Partners
+- HTTP response alapú hibákat kezel (4xx / 5xx)
+- hálózati és timeout kivételeket kezel (Throwable)
+- minden hibát egységes JSON struktúrára képez le
 
-- **[Vehikl](https://vehikl.com)**
-- **[Tighten Co.](https://tighten.co)**
-- **[Kirschbaum Development Group](https://kirschbaumdevelopment.com)**
-- **[64 Robots](https://64robots.com)**
-- **[Curotec](https://www.curotec.com/services/technologies/laravel)**
-- **[DevSquad](https://devsquad.com/hire-laravel-developers)**
-- **[Redberry](https://redberry.international/laravel-development)**
-- **[Active Logic](https://activelogic.com)**
+### Egységes error contract példa
 
-## Contributing
+ok: false
+error:
+  code: UPSTREAM_RATE_LIMITED
+  message: A külső szolgáltató túl sok kérést kapott (rate limit).
+  http_status: 502
+  retryable: true
+  meta:
+    upstream_status: 429
+    retry_after: 30
 
-Thank you for considering contributing to the Laravel framework! The contribution guide can be found in the [Laravel documentation](https://laravel.com/docs/contributions).
+---
 
-## Code of Conduct
+## Kezelt hibatípusok
 
-In order to ensure that the Laravel community is welcoming to all, please review and abide by the [Code of Conduct](https://laravel.com/docs/contributions#code-of-conduct).
+### Upstream HTTP hibák
+- 401 → UPSTREAM_UNAUTHORIZED
+- 403 → UPSTREAM_FORBIDDEN
+- 404 → UPSTREAM_NOT_FOUND
+- 422 → UPSTREAM_VALIDATION_FAILED
+- 429 → UPSTREAM_RATE_LIMITED
+- 5xx → UPSTREAM_UNAVAILABLE, UPSTREAM_TIMEOUT, UPSTREAM_SERVER_ERROR
 
-## Security Vulnerabilities
+### Hálózati / runtime hibák
+- Timeout → UPSTREAM_TIMEOUT
+- Connection / DNS hiba → UPSTREAM_CONNECTION_FAILED
+- Egyéb kivétel → UPSTREAM_UNEXPECTED_EXCEPTION
 
-If you discover a security vulnerability within Laravel, please send an e-mail to Taylor Otwell via [taylor@laravel.com](mailto:taylor@laravel.com). All security vulnerabilities will be promptly addressed.
+Minden hiba esetén:
+- az API 502 Bad Gateway státusszal válaszol
+- a kliens a retryable flag alapján dönthet az újrapróbálásról
 
-## License
+---
 
-The Laravel framework is open-sourced software licensed under the [MIT license](https://opensource.org/licenses/MIT).
+## Tesztelés
+
+A projekt feature teszteket tartalmaz Http::fake() használatával.
+
+Tesztelt esetek:
+- upstream 422 validációs hiba
+- upstream 429 rate limit Retry-After headerrel
+- upstream 503 unavailable
+- timeout kivétel
+- connection kivétel
+
+Teszt futtatása:
+php artisan test
+
+---
+
+## Simulate endpointok (csak fejlesztéshez)
+
+Fejlesztési környezetben (APP_ENV=local) elérhetők
+külön simulate route-ok, amelyekkel kézzel is kipróbálható a mapping.
+
+Példák:
+- /api/external/simulate/422
+- /api/external/simulate/429
+- /api/external/simulate/503
+- /api/external/simulate-timeout
+- /api/external/simulate-connection
+
+Ezek nem éles használatra készültek, kizárólag tanulási és tesztelési célokat szolgálnak.
+
+---
+
+## Futtatás
+
+composer install
+php artisan serve
+
+Demo endpoint:
+GET /api/external/demo
+
+---
+
+## Mit demonstrál ez a projekt?
+
+- defenzív backend gondolkodás
+- külső API hibák strukturált kezelése
+- stabil API error contract
+- retry policy előkészítése
+- Laravel 11 specifikus routing és tesztelés
+- nem tutorial-alapú, hanem problémaközpontú megoldás
+
+---
+
+## Megjegyzés
+
+Ez egy szándékosan kisméretű, fókuszált projekt.
+A cél nem egy teljes rendszer építése, hanem egy kritikus backend probléma
+tiszta, tesztelt megoldásának bemutatása.

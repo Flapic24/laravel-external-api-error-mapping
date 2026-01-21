@@ -97,4 +97,6 @@ class ExternalApiErrorMappingTest extends TestCase
             ->assertJsonPath('error.code', 'UPSTREAM_CONNECTION_FAILED')
             ->assertJsonPath('error.retryable', true);
     }
+
+    
 }
